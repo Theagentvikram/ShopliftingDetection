@@ -6,7 +6,7 @@ A cutting-edge deep learning system designed to enhance retail security by detec
 ---
 
 ## 🚀 Features
-- **Real-Time Detection**: Identifies objects such as people and products instantly.
+- **Real-Time Detection**: Identifies  objects such as people and products instantly.
 - **Behavioral Analysis**: Recognizes suspicious actions like concealing items.
 - **Anomaly Detection**: Flags unusual patterns using autoencoders.
 - **Multi-Object Tracking**: Tracks individuals consistently across frames.
