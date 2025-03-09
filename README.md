@@ -12,6 +12,7 @@ A cutting-edge deep learning system designed to enhance retail security by detec
 
 ---
 
+
 ## 🔧 Prerequisites
 Before starting, ensure the following software is installed:
 
