@@ -3,7 +3,6 @@
 ## 🖊️ Overview
 A cutting-edge deep learning system designed to enhance retail security by detecting and preventing shoplifting in real time. This project leverages YOLO for object detection, DeepSORT for multi-object tracking, and LSTM for activity recognition, ensuring efficient and accurate surveillance.
 
----
 
 ## 🚀 Features
 - **Real-Time Detection**: Identifies  objects such as people and products instantly.
