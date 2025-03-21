@@ -6,9 +6,12 @@ import cv2
 import numpy as np
 from datetime import datetime
 import json
+from flask_sock import Sock
+import base64
 
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
 
 # Initialize paths
 UPLOAD_FOLDER = 'uploads'
@@ -20,6 +23,30 @@ for folder in [UPLOAD_FOLDER, TRAINING_FOLDER, MODEL_FOLDER]:
 
 detector = ShopliftingDetector()
 
+@sock.route('/ws/detect')
+def ws_detect(ws):
+    while True:
+        # Receive frame as base64 string
+        frame_data = ws.receive()
+        
+        # Convert base64 to numpy array
+        encoded_data = frame_data.split(',')[1]
+        nparr = np.frombuffer(base64.b64decode(encoded_data), np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        # Process frame
+        processed_frame, results = detector.process_frame(frame)
+        
+        # Convert processed frame back to base64
+        _, buffer = cv2.imencode('.jpg', processed_frame)
+        processed_frame_data = base64.b64encode(buffer).decode('utf-8')
+        
+        # Send results back to client
+        ws.send(json.dumps({
+            'frame': f'data:image/jpeg;base64,{processed_frame_data}',
+            'results': results
+        }))
+
 @app.route('/api/detect', methods=['POST'])
 def detect_shoplifting():
     if 'video' not in request.files:
@@ -30,7 +57,11 @@ def detect_shoplifting():
     video_file.save(video_path)
     
     # Process video and get results
-    results = detector.process_video(video_path)
+    output_path = os.path.join(UPLOAD_FOLDER, f'output_{datetime.now().strftime("%Y%m%d_%H%M%S")}.mp4')
+    results = detector.process_video(video_path, output_path)
+    
+    # Add output video path to results
+    results['output_video'] = output_path
     
     return jsonify(results)
 
@@ -64,5 +95,9 @@ def get_stats():
     }
     return jsonify(stats)
 
+@app.route('/api/video/<path:filename>')
+def serve_video(filename):
+    return send_file(os.path.join(UPLOAD_FOLDER, filename))
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5001)
