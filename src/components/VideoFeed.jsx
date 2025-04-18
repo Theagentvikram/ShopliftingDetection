@@ -15,6 +15,9 @@ const FALLBACK_OBJECTS = [
   { class: 'laptop', score: 0.91 }
 ];
 
+// Use the green color for all objects as shown in the image
+const BOUNDING_BOX_COLOR = '#00FF00'; // Bright green
+
 const VideoFeed = ({ onDetection }) => {
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -26,6 +29,8 @@ const VideoFeed = ({ onDetection }) => {
   const [loading, setLoading] = useState(true);
   const [useFallbackDetection, setUseFallbackDetection] = useState(false);
   const [fallbackPosition, setFallbackPosition] = useState(0);
+  const [isComponentMounted, setIsComponentMounted] = useState(true);
+  const detectionIntervalRef = useRef(null);
   
   // Load COCO-SSD model
   useEffect(() => {
@@ -96,8 +101,7 @@ const VideoFeed = ({ onDetection }) => {
 
   // Draw detections on canvas
   const drawDetections = (predictions) => {
-    if (!canvasRef.current || !webcamRef.current || !webcamRef.current.video) {
-      console.log("Canvas or video reference not available");
+    if (!canvasRef.current || !webcamRef.current || !webcamRef.current.video || !isComponentMounted) {
       return;
     }
     
@@ -106,15 +110,16 @@ const VideoFeed = ({ onDetection }) => {
     
     // Skip if video dimensions aren't available
     if (!video.videoWidth || !video.videoHeight) {
-      console.log("Video dimensions not available yet");
       return;
     }
     
     const ctx = canvas.getContext('2d');
-
-    // Set canvas dimensions to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    
+    // Ensure canvas dimensions match video
+    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
 
     // Clear previous drawings
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -124,90 +129,51 @@ const VideoFeed = ({ onDetection }) => {
       return;
     }
 
-    console.log(`Drawing ${predictions.length} predictions`);
-    
-    // Color mapping for different objects
-    const colorMap = {
-      person: '#FF0000', // Red
-      backpack: '#00FF00', // Green
-      bottle: '#0000FF', // Blue
-      cell_phone: '#FFFF00', // Yellow
-      laptop: '#FF00FF', // Magenta
-      default: '#00FFFF' // Cyan
-    };
-    
     // Draw detections
     predictions.forEach((prediction, index) => {
       try {
-        // Ensure prediction exists
-        if (!prediction) {
+        if (!prediction || !prediction.bbox || !Array.isArray(prediction.bbox) || prediction.bbox.length !== 4) {
+          return;
+        }
+
+        // Get coordinates and ensure they are numbers
+        const [x, y, width, height] = prediction.bbox.map(Number);
+        
+        // Skip invalid coordinates
+        if ([x, y, width, height].some(val => isNaN(val) || val < 0)) {
           return;
         }
         
-        // Ensure bbox exists
-        if (!prediction.bbox || !Array.isArray(prediction.bbox) || prediction.bbox.length < 4) {
+        // Calculate dimensions relative to canvas
+        const boxX = Math.max(0, Math.min(x, canvas.width));
+        const boxY = Math.max(0, Math.min(y, canvas.height));
+        const boxWidth = Math.min(width, canvas.width - boxX);
+        const boxHeight = Math.min(height, canvas.height - boxY);
+        
+        // Skip if box has invalid dimensions
+        if (boxWidth <= 0 || boxHeight <= 0) {
           return;
         }
+
+        // Draw box
+        ctx.beginPath();
+        ctx.strokeStyle = BOUNDING_BOX_COLOR;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+        // Prepare text
+        const label = prediction.class || 'unknown';
+        const confidence = prediction.score || 0;
+        const text = `${label} ${Math.round(confidence * 100)}%`;
         
-        // Extract bbox coordinates
-        let [x, y, width, height] = prediction.bbox;
+        // Set text style
+        ctx.font = '16px Arial';
+        ctx.fillStyle = BOUNDING_BOX_COLOR;
         
-        // Convert to numbers and validate
-        x = Number(x);
-        y = Number(y);
-        width = Number(width);
-        height = Number(height);
+        // Draw text above the box
+        const textY = boxY > 20 ? boxY - 5 : boxY + boxHeight + 20;
+        ctx.fillText(text, boxX, textY);
         
-        if (isNaN(x) || isNaN(y) || isNaN(width) || isNaN(height) || 
-            width <= 0 || height <= 0) {
-          console.log(`Invalid dimensions for prediction ${index}`);
-          return;
-        }
-        
-        // Ensure coordinates are within canvas bounds
-        x = Math.max(0, Math.min(x, canvas.width - 1));
-        y = Math.max(0, Math.min(y, canvas.height - 1));
-        width = Math.min(width, canvas.width - x);
-        height = Math.min(height, canvas.height - y);
-        
-        // Get class name and confidence
-        const className = prediction.class || 'unknown';
-        const score = prediction.score || 0;
-        const text = `${className} ${Math.round(score * 100)}%`;
-        
-        // Select color based on object class
-        const color = colorMap[className.toLowerCase()] || colorMap.default;
-        
-        // Draw bounding box with thicker lines
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 4;
-        ctx.strokeRect(x, y, width, height);
-        
-        // Add a semi-transparent fill
-        ctx.fillStyle = color + '33'; // 20% opacity
-        ctx.fillRect(x, y, width, height);
-        
-        // Draw background for text
-        ctx.fillStyle = color + 'CC'; // 80% opacity
-        const textMetrics = ctx.measureText(text);
-        const textWidth = textMetrics.width;
-        const textHeight = 20;
-        ctx.fillRect(x, y > textHeight ? y - textHeight : y + height, textWidth + 10, textHeight);
-        
-        // Draw label with shadow for better visibility
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 16px Arial';
-        ctx.shadowColor = 'black';
-        ctx.shadowBlur = 4;
-        ctx.shadowOffsetX = 1;
-        ctx.shadowOffsetY = 1;
-        ctx.fillText(text, x + 5, y > textHeight ? y - 5 : y + height + 15);
-        
-        // Reset shadow
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
       } catch (err) {
         console.error(`Error drawing detection ${index}:`, err);
       }
@@ -240,50 +206,60 @@ const VideoFeed = ({ onDetection }) => {
         maxNumBoxes: 10  // Increased for better detection
       });
       
-      if (predictions && predictions.length > 0) {
+      if (!predictions || !Array.isArray(predictions)) {
+        console.log("No valid predictions array returned");
+        return;
+      }
+
+      if (predictions.length > 0) {
         console.log("Raw predictions:", JSON.stringify(predictions));
       } else {
         console.log("No objects detected in this frame");
       }
       
-      // Convert TensorFlow.js predictions to a standard format to fix coordinate issues
-      const standardizedPredictions = predictions.map(pred => {
-        if (!pred || !pred.bbox || !Array.isArray(pred.bbox) || pred.bbox.length < 4) {
-          return null;
-        }
-        
-        // TensorFlow.js COCO-SSD returns [y, x, height, width] in some environments
-        // Let's check the values to determine the right format
-        const [first, second, third, fourth] = pred.bbox;
-        
-        // If the width/height values are larger than the x/y values, 
-        // it means the order might be flipped
-        const isFlipped = (third > first && fourth > second);
-        
-        let x, y, width, height;
-        
-        if (isFlipped) {
-          // Format is [y, x, height, width], so we need to rearrange
-          y = first;
-          x = second;
-          height = third;
-          width = fourth;
-          console.log("Fixed flipped coordinates");
-        } else {
-          // Normal format [x, y, width, height]
-          x = first;
-          y = second;
-          width = third;
-          height = fourth;
-        }
-        
-        // Return a standardized prediction object
-        return {
-          class: pred.class || 'unknown',
-          score: pred.score || 0,
-          bbox: [x, y, width, height]
-        };
-      }).filter(Boolean); // Remove null entries
+      // Convert TensorFlow.js predictions to a standard format
+      const standardizedPredictions = predictions
+        .filter(pred => pred && pred.bbox && Array.isArray(pred.bbox) && pred.bbox.length === 4)
+        .map(pred => {
+          const [first, second, third, fourth] = pred.bbox.map(Number);
+          
+          // Check if coordinates are valid numbers
+          if ([first, second, third, fourth].some(isNaN)) {
+            console.log("Invalid coordinates:", pred.bbox);
+            return null;
+          }
+          
+          let x, y, width, height;
+          
+          // TensorFlow.js COCO-SSD can return coordinates in different formats
+          // Check if the format appears to be [y, x, height, width]
+          const isFlipped = (third > first && fourth > second);
+          
+          if (isFlipped) {
+            y = first;
+            x = second;
+            height = third;
+            width = fourth;
+          } else {
+            x = first;
+            y = second;
+            width = third;
+            height = fourth;
+          }
+          
+          // Validate final dimensions
+          if (width <= 0 || height <= 0) {
+            console.log("Invalid box dimensions:", { width, height });
+            return null;
+          }
+          
+          return {
+            class: pred.class || 'unknown',
+            score: pred.score || 0,
+            bbox: [x, y, width, height]
+          };
+        })
+        .filter(Boolean); // Remove null entries
       
       if (standardizedPredictions.length > 0) {
         console.log("Standardized predictions:", JSON.stringify(standardizedPredictions));
@@ -296,20 +272,23 @@ const VideoFeed = ({ onDetection }) => {
           onDetection(standardizedPredictions);
         }
       } else {
-        // Clear the canvas if no detections
+        // Clear the canvas if no valid detections
         if (canvasRef.current) {
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext('2d');
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          const ctx = canvasRef.current.getContext('2d');
+          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
         }
         
-        // If we consistently get no detections, switch to fallback
-        console.log("No valid predictions found");
+        // Send empty array to parent
+        if (onDetection) {
+          onDetection([]);
+        }
       }
     } catch (err) {
       console.error("Error running detection:", err);
-      console.warn("Switching to fallback detection mechanism");
-      setUseFallbackDetection(FALLBACK_DETECTION_ENABLED);
+      if (err.message.includes('undefined') || err.message.includes('null')) {
+        console.warn("Detection returned invalid data, switching to fallback");
+        setUseFallbackDetection(FALLBACK_DETECTION_ENABLED);
+      }
     }
   };
 
@@ -357,7 +336,8 @@ const VideoFeed = ({ onDetection }) => {
       
       return {
         ...obj,
-        bbox: [xPos, yPos, width, height]
+        bbox: [xPos, yPos, width, height],
+        color: BOUNDING_BOX_COLOR // Use consistent color
       };
     });
     
@@ -392,9 +372,77 @@ const VideoFeed = ({ onDetection }) => {
     }
   };
 
+  // Cleanup function
+  const cleanup = () => {
+    // Clear detection interval
+    if (detectionIntervalRef.current) {
+      clearInterval(detectionIntervalRef.current);
+      detectionIntervalRef.current = null;
+    }
+
+    // Stop media recorder if active
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+    }
+
+    // Stop all tracks
+    if (stream) {
+      stream.getTracks().forEach(track => {
+        track.stop();
+        track.enabled = false;
+      });
+    }
+
+    // Clear video source
+    if (webcamRef.current && webcamRef.current.video) {
+      webcamRef.current.video.srcObject = null;
+    }
+
+    // Clear canvas
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    }
+
+    // Reset states
+    setStream(null);
+    setMediaRecorder(null);
+    setIsRecording(false);
+    setModel(null);
+    setError(null);
+    setUseFallbackDetection(false);
+  };
+
+  // Component mount/unmount effect
+  useEffect(() => {
+    setIsComponentMounted(true);
+
+    // Cleanup on unmount
+    return () => {
+      setIsComponentMounted(false);
+      cleanup();
+    };
+  }, []);
+
+  // Handle component visibility changes
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && isComponentMounted) {
+        cleanup();
+      } else if (!document.hidden && isComponentMounted) {
+        // Restart camera when page becomes visible again
+        setupCamera();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isComponentMounted]);
+
   // Start webcam and detection loop
   useEffect(() => {
-    let detectionInterval;
     let mounted = true;
     let resizeObserver;
     
@@ -406,9 +454,9 @@ const VideoFeed = ({ onDetection }) => {
         const constraints = {
           video: {
             facingMode: "environment",
-            width: { ideal: 480, max: 640 },  // Reduced size for better performance
+            width: { ideal: 480, max: 640 },
             height: { ideal: 360, max: 480 },
-            frameRate: { ideal: 10, max: 15 } // Lower framerate for stable detection
+            frameRate: { ideal: 15, max: 30 }
           }
         };
         
@@ -417,7 +465,7 @@ const VideoFeed = ({ onDetection }) => {
         // Access webcam
         const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         
-        if (!mounted) {
+        if (!mounted || !isComponentMounted) {
           mediaStream.getTracks().forEach(track => track.stop());
           return;
         }
@@ -428,65 +476,58 @@ const VideoFeed = ({ onDetection }) => {
           setStream(mediaStream);
           console.log("Camera stream connected successfully");
           
-          // Log the tracks for debugging
-          mediaStream.getTracks().forEach(track => {
-            console.log("Track settings:", track.getSettings());
-          });
-          
-          // Add resize observer to keep canvas in sync with video dimensions
+          // Add resize observer
           if ('ResizeObserver' in window) {
             resizeObserver = new ResizeObserver(entries => {
+              if (!isComponentMounted) return;
               for (const entry of entries) {
-                if (entry.target === webcamRef.current.video && canvasRef.current) {
-                  // Update canvas size when video element resizes
-                  canvasRef.current.width = webcamRef.current.video.videoWidth;
-                  canvasRef.current.height = webcamRef.current.video.videoHeight;
-                  console.log("Canvas resized to match video:", 
-                    canvasRef.current.width, canvasRef.current.height);
+                if (entry.target === webcamRef.current?.video && canvasRef.current) {
+                  canvasRef.current.width = entry.target.videoWidth;
+                  canvasRef.current.height = entry.target.videoHeight;
                 }
               }
             });
             
-            // Start observing the video element
             resizeObserver.observe(webcamRef.current.video);
           }
         }
         
-        // Setup detection interval once camera is ready
-        detectionInterval = setInterval(() => {
-          runDetection();
-        }, 250);  // Increased to 4fps for better detection
+        // Setup detection interval
+        if (detectionIntervalRef.current) {
+          clearInterval(detectionIntervalRef.current);
+        }
+        
+        detectionIntervalRef.current = setInterval(() => {
+          if (isComponentMounted) {
+            runDetection();
+          }
+        }, 100);  // Run at 10fps
         
       } catch (err) {
         console.error("Error accessing camera:", err);
-        setError("Failed to access camera: " + err.message);
-        setUseFallbackDetection(true);
+        if (mounted && isComponentMounted) {
+          setError("Failed to access camera: " + err.message);
+          setUseFallbackDetection(true);
+        }
       } finally {
-        if (mounted) {
+        if (mounted && isComponentMounted) {
           setLoading(false);
         }
       }
     };
     
-    setupCamera();
+    if (isComponentMounted) {
+      setupCamera();
+    }
     
     return () => {
       mounted = false;
-      
-      // Clear detection interval
-      if (detectionInterval) clearInterval(detectionInterval);
-      
-      // Clean up resize observer
       if (resizeObserver) {
         resizeObserver.disconnect();
       }
-      
-      // Stop all tracks
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
+      cleanup();
     };
-  }, []);
+  }, [isComponentMounted]);
 
   // Handle video ready state
   const handleCanPlay = () => {

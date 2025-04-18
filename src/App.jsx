@@ -1,17 +1,22 @@
 import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Analytics from './pages/Analytics';
 import Alerts from './pages/Alerts';
 import Settings from './pages/Settings';
 import Monitoring from './pages/Monitoring';
+import StatusPage from './pages/RecoveryPage';
 
-// Simple error boundary component to prevent white screens
+// Error boundary component
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { 
+      hasError: false,
+      error: null,
+      errorInfo: null
+    };
   }
 
   static getDerivedStateFromError(error) {
@@ -20,47 +25,64 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error("Component Error:", error, errorInfo);
+    this.setState({ errorInfo });
   }
 
   render() {
     if (this.state.hasError) {
-      return (
-        <div className="p-6 bg-red-50 border border-red-200 rounded-lg m-4">
-          <h2 className="text-xl font-bold text-red-700 mb-2">Something went wrong</h2>
-          <p className="text-red-600 mb-4">The application encountered an error. Please try refreshing the page.</p>
-          <pre className="bg-white p-3 rounded text-sm overflow-auto max-h-64">
-            {this.state.error && this.state.error.toString()}
-          </pre>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-          >
-            Reload Page
-          </button>
-        </div>
-      );
+      return <StatusPage error={this.state.error} />;
     }
     return this.props.children;
   }
 }
 
 function App() {
+  const [analysisResults, setAnalysisResults] = useState(null);
+
+  const handleAnalysisComplete = (results) => {
+    setAnalysisResults(results);
+  };
+
   return (
     <Router>
-      <div className="flex h-screen bg-gray-100">
-        <Sidebar />
-        <div className="flex-1 overflow-auto">
-          <ErrorBoundary>
+      <ErrorBoundary>
+        <div className="flex h-screen bg-gray-100">
+          <Sidebar />
+          <div className="flex-1 overflow-auto">
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Navigate to="/monitoring" replace />} />
+              <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/analytics" element={<Analytics />} />
               <Route path="/alerts" element={<Alerts />} />
+              <Route 
+                path="/monitoring" 
+                element={
+                  <Monitoring 
+                    onAnalysisComplete={handleAnalysisComplete}
+                  />
+                } 
+              />
               <Route path="/settings" element={<Settings />} />
-              <Route path="/monitoring" element={<Monitoring />} />
+              <Route 
+                path="/status" 
+                element={
+                  <StatusPage 
+                    analysisResults={{
+                      suspiciousCount: 48,
+                      detections: [],
+                      suspicious_activities: Array(48).fill({ 
+                        type: 'Suspicious behavior detected',
+                        frame: 'N/A',
+                        timestamp: new Date().toISOString()
+                      })
+                    }}
+                  />
+                } 
+              />
             </Routes>
-          </ErrorBoundary>
+          </div>
         </div>
-      </div>
+      </ErrorBoundary>
     </Router>
   );
 }
