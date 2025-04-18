@@ -116,10 +116,8 @@ const VideoFeed = ({ onDetection }) => {
     const ctx = canvas.getContext('2d');
     
     // Ensure canvas dimensions match video
-    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-    }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
     // Clear previous drawings
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -130,7 +128,7 @@ const VideoFeed = ({ onDetection }) => {
     }
 
     // Draw detections
-    predictions.forEach((prediction, index) => {
+    predictions.forEach((prediction) => {
       try {
         if (!prediction || !prediction.bbox || !Array.isArray(prediction.bbox) || prediction.bbox.length !== 4) {
           return;
@@ -143,39 +141,31 @@ const VideoFeed = ({ onDetection }) => {
         if ([x, y, width, height].some(val => isNaN(val) || val < 0)) {
           return;
         }
-        
-        // Calculate dimensions relative to canvas
-        const boxX = Math.max(0, Math.min(x, canvas.width));
-        const boxY = Math.max(0, Math.min(y, canvas.height));
-        const boxWidth = Math.min(width, canvas.width - boxX);
-        const boxHeight = Math.min(height, canvas.height - boxY);
-        
-        // Skip if box has invalid dimensions
-        if (boxWidth <= 0 || boxHeight <= 0) {
-          return;
-        }
 
         // Draw box
         ctx.beginPath();
         ctx.strokeStyle = BOUNDING_BOX_COLOR;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, width, height);
 
         // Prepare text
         const label = prediction.class || 'unknown';
         const confidence = prediction.score || 0;
         const text = `${label} ${Math.round(confidence * 100)}%`;
         
-        // Set text style
-        ctx.font = '16px Arial';
+        // Draw background for text
+        ctx.font = 'bold 16px Arial';
+        const textMetrics = ctx.measureText(text);
+        const textHeight = 20;
         ctx.fillStyle = BOUNDING_BOX_COLOR;
+        ctx.fillRect(x, y - textHeight - 2, textMetrics.width + 10, textHeight);
         
-        // Draw text above the box
-        const textY = boxY > 20 ? boxY - 5 : boxY + boxHeight + 20;
-        ctx.fillText(text, boxX, textY);
+        // Draw text
+        ctx.fillStyle = '#000000';
+        ctx.fillText(text, x + 5, y - 5);
         
       } catch (err) {
-        console.error(`Error drawing detection ${index}:`, err);
+        console.error('Error drawing detection:', err);
       }
     });
   };
@@ -194,8 +184,8 @@ const VideoFeed = ({ onDetection }) => {
     
     const video = webcamRef.current.video;
     
-    // Skip if video is not ready
-    if (video.readyState !== 4 || !video.videoWidth || !video.videoHeight) {
+    // Skip if video is not ready or paused
+    if (video.readyState !== 4 || !video.videoWidth || !video.videoHeight || video.paused) {
       return;
     }
     
@@ -217,71 +207,26 @@ const VideoFeed = ({ onDetection }) => {
         console.log("No objects detected in this frame");
       }
       
+      // Draw the detections directly first
+      drawBoxesDirectly(predictions);
+      
       // Convert TensorFlow.js predictions to a standard format
       const standardizedPredictions = predictions
         .filter(pred => pred && pred.bbox && Array.isArray(pred.bbox) && pred.bbox.length === 4)
         .map(pred => {
-          const [first, second, third, fourth] = pred.bbox.map(Number);
-          
-          // Check if coordinates are valid numbers
-          if ([first, second, third, fourth].some(isNaN)) {
-            console.log("Invalid coordinates:", pred.bbox);
-            return null;
-          }
-          
-          let x, y, width, height;
-          
-          // TensorFlow.js COCO-SSD can return coordinates in different formats
-          // Check if the format appears to be [y, x, height, width]
-          const isFlipped = (third > first && fourth > second);
-          
-          if (isFlipped) {
-            y = first;
-            x = second;
-            height = third;
-            width = fourth;
-          } else {
-            x = first;
-            y = second;
-            width = third;
-            height = fourth;
-          }
-          
-          // Validate final dimensions
-          if (width <= 0 || height <= 0) {
-            console.log("Invalid box dimensions:", { width, height });
-            return null;
-          }
-          
           return {
             class: pred.class || 'unknown',
             score: pred.score || 0,
-            bbox: [x, y, width, height]
+            bbox: pred.bbox
           };
         })
         .filter(Boolean); // Remove null entries
       
-      if (standardizedPredictions.length > 0) {
-        console.log("Standardized predictions:", JSON.stringify(standardizedPredictions));
-        
-        // Draw the detections
-        drawDetections(standardizedPredictions);
-        
-        // Send detections to parent component
-        if (onDetection) {
-          onDetection(standardizedPredictions);
-        }
-      } else {
-        // Clear the canvas if no valid detections
-        if (canvasRef.current) {
-          const ctx = canvasRef.current.getContext('2d');
-          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
-        
-        // Send empty array to parent
-        if (onDetection) {
-          onDetection([]);
-        }
+      // Send detections to parent component
+      if (onDetection && standardizedPredictions.length > 0) {
+        onDetection(standardizedPredictions);
+      } else if (onDetection) {
+        onDetection([]);
       }
     } catch (err) {
       console.error("Error running detection:", err);
@@ -290,6 +235,60 @@ const VideoFeed = ({ onDetection }) => {
         setUseFallbackDetection(FALLBACK_DETECTION_ENABLED);
       }
     }
+  };
+
+  // Draw bounding boxes directly from COCO-SSD format
+  const drawBoxesDirectly = (predictions) => {
+    if (!canvasRef.current || !webcamRef.current || !webcamRef.current.video) {
+      return;
+    }
+    
+    const video = webcamRef.current.video;
+    const canvas = canvasRef.current;
+    
+    if (!video.videoWidth || !video.videoHeight) {
+      return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    
+    // Make sure canvas size matches video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Clear previous drawings
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Exit if no predictions
+    if (!predictions || !Array.isArray(predictions) || predictions.length === 0) {
+      return;
+    }
+    
+    // Draw each box
+    predictions.forEach(prediction => {
+      if (!prediction || !prediction.bbox) return;
+      
+      const [x, y, width, height] = prediction.bbox;
+      
+      // Draw rectangle
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = BOUNDING_BOX_COLOR;
+      ctx.strokeRect(x, y, width, height);
+      
+      // Text to display
+      const score = prediction.score * 100;
+      const label = `${prediction.class} ${Math.round(score)}%`;
+      
+      // Background for text
+      ctx.font = 'bold 16px Arial';
+      const textWidth = ctx.measureText(label).width;
+      ctx.fillStyle = BOUNDING_BOX_COLOR;
+      ctx.fillRect(x, y - 22, textWidth + 10, 22);
+      
+      // Text
+      ctx.fillStyle = 'black';
+      ctx.fillText(label, x + 5, y - 5);
+    });
   };
 
   // Fallback detection method when TensorFlow isn't working
@@ -377,7 +376,6 @@ const VideoFeed = ({ onDetection }) => {
     // Clear detection interval
     if (detectionIntervalRef.current) {
       clearInterval(detectionIntervalRef.current);
-      detectionIntervalRef.current = null;
     }
 
     // Stop media recorder if active
@@ -615,6 +613,33 @@ const VideoFeed = ({ onDetection }) => {
     }
   };
 
+  // Handle video click to stop/start
+  const handleVideoClick = () => {
+    if (!webcamRef.current || !webcamRef.current.video) return;
+    
+    const video = webcamRef.current.video;
+    
+    if (video.paused) {
+      // Resume video and detection
+      video.play();
+      
+      // Restart detection interval if needed
+      if (!detectionIntervalRef.current) {
+        detectionIntervalRef.current = setInterval(() => {
+          if (isComponentMounted) {
+            runDetection();
+          }
+        }, 100);
+      }
+    } else {
+      // Pause video and keep detection overlay visible
+      video.pause();
+      
+      // Keep the detection interval running so we can see the last frame's detections
+      // Instead of clearing it completely
+    }
+  };
+
   return (
     <div className="relative w-full h-full flex items-center justify-center bg-gray-900">
       {/* Loading indicator */}
@@ -659,7 +684,7 @@ const VideoFeed = ({ onDetection }) => {
         <Webcam
           ref={webcamRef}
           onCanPlay={handleCanPlay}
-          className="w-full h-full object-contain bg-black"
+          className="w-full h-full object-contain bg-black cursor-pointer"
           screenshotFormat="image/png"
           videoConstraints={{
             width: { ideal: 480, max: 640 },
@@ -669,12 +694,17 @@ const VideoFeed = ({ onDetection }) => {
           }}
           mirrored={false}
           audio={false}
+          onClick={handleVideoClick}
         />
         
         {/* Detection overlay */}
         <canvas
           ref={canvasRef}
           className="absolute top-0 left-0 w-full h-full pointer-events-none"
+          style={{
+            width: webcamRef.current?.video?.videoWidth || '100%',
+            height: webcamRef.current?.video?.videoHeight || '100%'
+          }}
         />
       </div>
       
