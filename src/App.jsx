@@ -67,15 +67,7 @@ function App() {
                 path="/status" 
                 element={
                   <StatusPage 
-                    analysisResults={{
-                      suspiciousCount: 48,
-                      detections: [],
-                      suspicious_activities: Array(48).fill({ 
-                        type: 'Suspicious behavior detected',
-                        frame: 'N/A',
-                        timestamp: new Date().toISOString()
-                      })
-                    }}
+                    analysisResults={analysisResults}
                   />
                 } 
               />

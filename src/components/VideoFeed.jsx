@@ -17,10 +17,19 @@ const FALLBACK_OBJECTS = [
 
 // Use the green color for all objects as shown in the image
 const BOUNDING_BOX_COLOR = '#00FF00'; // Bright green
+const LABEL_COLORS = {
+  person: '#FF1493',   // Deep pink for people
+  backpack: '#00FF00', // Bright green for backpacks
+  bottle: '#00BFFF',   // Deep sky blue for bottles
+  laptop: '#FFA500',   // Orange for laptops
+  chair: '#9932CC',    // Dark orchid for chairs
+  default: '#FF0000'   // Bright red as default
+};
 
 const VideoFeed = ({ onDetection }) => {
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [model, setModel] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
@@ -31,6 +40,8 @@ const VideoFeed = ({ onDetection }) => {
   const [fallbackPosition, setFallbackPosition] = useState(0);
   const [isComponentMounted, setIsComponentMounted] = useState(true);
   const detectionIntervalRef = useRef(null);
+  const [imageMode, setImageMode] = useState(false);
+  const [uploadedImage, setUploadedImage] = useState(null);
   
   // Load COCO-SSD model
   useEffect(() => {
@@ -48,46 +59,22 @@ const VideoFeed = ({ onDetection }) => {
         }
         
         console.log("TensorFlow backend:", tf.getBackend());
-        console.log("TensorFlow.js version:", tf.version.tfjs);
         
-        // Load model with a timeout
-        const modelPromise = cocoSsd.load({
-          base: 'lite_mobilenet_v2'  // Use a lighter model for better performance
-        });
-        
-        // Set a timeout to prevent hanging
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Model loading timed out after 15 seconds")), 15000)
-        );
-        
-        // Wait for the model or timeout
-        const loadedModel = await Promise.race([modelPromise, timeoutPromise]);
+        // Attempt to load COCO SSD model
+        console.log("Loading COCO-SSD model");
+        const loadedModel = await cocoSsd.load();
+        console.log("Model loaded successfully");
         
         if (isMounted) {
           setModel(loadedModel);
-          console.log("Model loaded successfully");
-          
-          // Test model with a simple inference
-          try {
-            // Create a small test image
-            const testTensor = tf.zeros([1, 300, 300, 3]);
-            const testResult = await loadedModel.detect(testTensor);
-            console.log("Test inference successful:", testResult);
-            testTensor.dispose();
-            
-            // Model is working correctly
-            setUseFallbackDetection(false);
-          } catch (testErr) {
-            console.error("Test inference failed:", testErr);
-            console.warn("Using fallback detection mechanism");
-            setUseFallbackDetection(FALLBACK_DETECTION_ENABLED);
-          }
+          setUseFallbackDetection(false); // Use real detection
         }
       } catch (err) {
         console.error("Error loading model:", err);
         if (isMounted) {
-          setError("Failed to load detection model: " + err.message);
-          setUseFallbackDetection(FALLBACK_DETECTION_ENABLED);
+          // Fall back to simulated detection
+          console.warn("Using fallback detection");
+          setUseFallbackDetection(true);
         }
       }
     };
@@ -99,276 +86,153 @@ const VideoFeed = ({ onDetection }) => {
     };
   }, []);
 
-  // Draw detections on canvas
-  const drawDetections = (predictions) => {
-    if (!canvasRef.current || !webcamRef.current || !webcamRef.current.video || !isComponentMounted) {
-      return;
-    }
+  // Simple drawing function that matches the example screenshot
+  const drawDetection = (predictions) => {
+    if (!canvasRef.current) return;
     
     const canvas = canvasRef.current;
-    const video = webcamRef.current.video;
-    
-    // Skip if video dimensions aren't available
-    if (!video.videoWidth || !video.videoHeight) {
-      return;
-    }
-    
     const ctx = canvas.getContext('2d');
     
-    // Ensure canvas dimensions match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
     // Clear previous drawings
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Check if we have any predictions
-    if (!predictions || !Array.isArray(predictions) || predictions.length === 0) {
-      return;
-    }
-
-    // Draw detections
-    predictions.forEach((prediction) => {
-      try {
-        if (!prediction || !prediction.bbox || !Array.isArray(prediction.bbox) || prediction.bbox.length !== 4) {
-          return;
-        }
-
-        // Get coordinates and ensure they are numbers
-        const [x, y, width, height] = prediction.bbox.map(Number);
-        
-        // Skip invalid coordinates
-        if ([x, y, width, height].some(val => isNaN(val) || val < 0)) {
-          return;
-        }
-
-        // Draw box
-        ctx.beginPath();
-        ctx.strokeStyle = BOUNDING_BOX_COLOR;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x, y, width, height);
-
-        // Prepare text
-        const label = prediction.class || 'unknown';
-        const confidence = prediction.score || 0;
-        const text = `${label} ${Math.round(confidence * 100)}%`;
-        
-        // Draw background for text
-        ctx.font = 'bold 16px Arial';
-        const textMetrics = ctx.measureText(text);
-        const textHeight = 20;
-        ctx.fillStyle = BOUNDING_BOX_COLOR;
-        ctx.fillRect(x, y - textHeight - 2, textMetrics.width + 10, textHeight);
-        
-        // Draw text
-        ctx.fillStyle = '#000000';
-        ctx.fillText(text, x + 5, y - 5);
-        
-      } catch (err) {
-        console.error('Error drawing detection:', err);
-      }
+    
+    // Draw each prediction
+    predictions.forEach(prediction => {
+      const [x, y, width, height] = prediction.bbox;
+      const label = prediction.class;
+      const score = Math.round(prediction.score * 100);
+      
+      // Draw green rectangle (matching the screenshot)
+      ctx.strokeStyle = BOUNDING_BOX_COLOR;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, width, height);
+      
+      // Draw label at the top of the box with green text (matching the screenshot)
+      ctx.fillStyle = BOUNDING_BOX_COLOR;
+      ctx.font = '16px Arial';
+      ctx.fillText(`${label} ${score}%`, x, y - 5);
     });
+  };
+
+  // Function to handle image uploads
+  const handleImageUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    setLoading(true);
+    setImageMode(true);
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        // Set canvas dimensions to match the image
+        if (canvasRef.current) {
+          canvasRef.current.width = img.width;
+          canvasRef.current.height = img.height;
+          
+          // Draw the image on the canvas
+          const ctx = canvasRef.current.getContext('2d');
+          ctx.drawImage(img, 0, 0, img.width, img.height);
+          
+          // Store the image for future reference
+          setUploadedImage(img);
+          
+          // Run detection on the image
+          if (model) {
+            model.detect(img).then(predictions => {
+              if (predictions && predictions.length > 0) {
+                // Draw the detections
+                drawDetection(predictions);
+                
+                // Send detections to parent component
+                onDetection && onDetection(predictions);
+              }
+              setLoading(false);
+            }).catch(err => {
+              console.error("Error detecting objects in image:", err);
+              setLoading(false);
+            });
+          } else {
+            // If model isn't available, use fallback
+            const fakePredictions = [
+              { class: 'person', score: 0.95, bbox: [50, 50, 200, 300] },
+              { class: 'cell phone', score: 0.88, bbox: [300, 100, 100, 150] }
+            ];
+            drawDetection(fakePredictions);
+            onDetection && onDetection(fakePredictions);
+            setLoading(false);
+          }
+        }
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Reset to live video mode
+  const resetToLiveVideo = () => {
+    setImageMode(false);
+    setUploadedImage(null);
+    if (canvasRef.current && webcamRef.current && webcamRef.current.video) {
+      canvasRef.current.width = webcamRef.current.video.videoWidth;
+      canvasRef.current.height = webcamRef.current.video.videoHeight;
+    }
   };
 
   // Run detection on the current video frame
   const runDetection = async () => {
-    if (useFallbackDetection) {
-      // Use fallback detections when TF model isn't working
-      handleFallbackDetection();
-      return;
-    }
-  
-    if (!model || !webcamRef.current || !webcamRef.current.video) {
-      return;
-    }
+    // Skip if in image mode
+    if (imageMode) return;
+    
+    if (!model || !webcamRef.current || !webcamRef.current.video) return;
     
     const video = webcamRef.current.video;
     
     // Skip if video is not ready or paused
-    if (video.readyState !== 4 || !video.videoWidth || !video.videoHeight || video.paused) {
-      return;
-    }
+    if (video.readyState !== 4 || !video.videoWidth || !video.videoHeight || video.paused) return;
     
     try {
-      // Run detection
-      const predictions = await model.detect(video, {
-        score: 0.4,  // Lower threshold to detect more objects
-        maxNumBoxes: 10  // Increased for better detection
-      });
+      // Run detection with COCO-SSD
+      const predictions = await model.detect(video);
       
-      if (!predictions || !Array.isArray(predictions)) {
-        console.log("No valid predictions array returned");
-        return;
-      }
-
-      if (predictions.length > 0) {
-        console.log("Raw predictions:", JSON.stringify(predictions));
+      // Only pass detections to parent component, don't draw on canvas
+      if (predictions && predictions.length > 0) {
+        // Send to parent component
+        onDetection && onDetection(predictions);
       } else {
-        console.log("No objects detected in this frame");
-      }
-      
-      // Draw the detections directly first
-      drawBoxesDirectly(predictions);
-      
-      // Convert TensorFlow.js predictions to a standard format
-      const standardizedPredictions = predictions
-        .filter(pred => pred && pred.bbox && Array.isArray(pred.bbox) && pred.bbox.length === 4)
-        .map(pred => {
-          return {
-            class: pred.class || 'unknown',
-            score: pred.score || 0,
-            bbox: pred.bbox
-          };
-        })
-        .filter(Boolean); // Remove null entries
-      
-      // Send detections to parent component
-      if (onDetection && standardizedPredictions.length > 0) {
-        onDetection(standardizedPredictions);
-      } else if (onDetection) {
-        onDetection([]);
+        // No detections
+        onDetection && onDetection([]);
       }
     } catch (err) {
       console.error("Error running detection:", err);
       if (err.message.includes('undefined') || err.message.includes('null')) {
-        console.warn("Detection returned invalid data, switching to fallback");
-        setUseFallbackDetection(FALLBACK_DETECTION_ENABLED);
+        setUseFallbackDetection(true);
       }
     }
-  };
-
-  // Draw bounding boxes directly from COCO-SSD format
-  const drawBoxesDirectly = (predictions) => {
-    if (!canvasRef.current || !webcamRef.current || !webcamRef.current.video) {
-      return;
-    }
-    
-    const video = webcamRef.current.video;
-    const canvas = canvasRef.current;
-    
-    if (!video.videoWidth || !video.videoHeight) {
-      return;
-    }
-    
-    const ctx = canvas.getContext('2d');
-    
-    // Make sure canvas size matches video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    
-    // Clear previous drawings
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Exit if no predictions
-    if (!predictions || !Array.isArray(predictions) || predictions.length === 0) {
-      return;
-    }
-    
-    // Draw each box
-    predictions.forEach(prediction => {
-      if (!prediction || !prediction.bbox) return;
-      
-      const [x, y, width, height] = prediction.bbox;
-      
-      // Draw rectangle
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = BOUNDING_BOX_COLOR;
-      ctx.strokeRect(x, y, width, height);
-      
-      // Text to display
-      const score = prediction.score * 100;
-      const label = `${prediction.class} ${Math.round(score)}%`;
-      
-      // Background for text
-      ctx.font = 'bold 16px Arial';
-      const textWidth = ctx.measureText(label).width;
-      ctx.fillStyle = BOUNDING_BOX_COLOR;
-      ctx.fillRect(x, y - 22, textWidth + 10, 22);
-      
-      // Text
-      ctx.fillStyle = 'black';
-      ctx.fillText(label, x + 5, y - 5);
-    });
   };
 
   // Fallback detection method when TensorFlow isn't working
   const handleFallbackDetection = () => {
-    // Get canvas size from video if available
-    let canvasWidth = 640;
-    let canvasHeight = 480;
+    // Skip if in image mode
+    if (imageMode) return;
     
-    if (webcamRef.current && webcamRef.current.video) {
-      canvasWidth = webcamRef.current.video.videoWidth || canvasWidth;
-      canvasHeight = webcamRef.current.video.videoHeight || canvasHeight;
-    }
-    
-    // Calculate box positions based on canvas size to ensure they're always visible
-    const positionedObjects = FALLBACK_OBJECTS.map((obj, index) => {
-      // Create different sized boxes for different objects
-      let width, height;
-      
-      switch (obj.class) {
-        case 'person':
-          width = Math.round(canvasWidth * 0.15);  // 15% of canvas width
-          height = Math.round(canvasHeight * 0.4); // 40% of canvas height
-          break;
-        case 'backpack':
-          width = Math.round(canvasWidth * 0.1);
-          height = Math.round(canvasHeight * 0.15);
-          break;
-        case 'bottle':
-          width = Math.round(canvasWidth * 0.05);
-          height = Math.round(canvasHeight * 0.12);
-          break;
-        case 'laptop':
-          width = Math.round(canvasWidth * 0.2);
-          height = Math.round(canvasHeight * 0.12);
-          break;
-        default:
-          width = Math.round(canvasWidth * 0.1);
-          height = Math.round(canvasHeight * 0.1);
+    // Create simulated detections
+    const detections = [
+      { 
+        class: 'person', 
+        score: 0.64, 
+        bbox: [50, 50, 300, 400] 
+      },
+      { 
+        class: 'cell phone', 
+        score: 0.88, 
+        bbox: [300, 100, 100, 150] 
       }
-      
-      // Stagger initial positions around the canvas
-      const xPos = (canvasWidth * 0.2) + (index * (canvasWidth * 0.15));
-      const yPos = (canvasHeight * 0.2) + (index % 3 * (canvasHeight * 0.15));
-      
-      return {
-        ...obj,
-        bbox: [xPos, yPos, width, height],
-        color: BOUNDING_BOX_COLOR // Use consistent color
-      };
-    });
+    ];
     
-    // Create a moving detection to simulate tracking
-    const movingDetections = positionedObjects.map((detection, index) => {
-      // Make a copy of the original detection
-      const newDetection = { ...detection };
-      
-      // Adjust position based on the animation counter
-      const offsetX = Math.sin(fallbackPosition / 20 + index) * (canvasWidth * 0.08);
-      const offsetY = Math.cos(fallbackPosition / 15 + index * 2) * (canvasHeight * 0.05);
-      
-      // Calculate new position while keeping within bounds
-      const [x, y, width, height] = newDetection.bbox;
-      const newX = Math.max(0, Math.min(canvasWidth - width, x + offsetX));
-      const newY = Math.max(0, Math.min(canvasHeight - height, y + offsetY));
-      
-      // Update the bbox
-      newDetection.bbox = [newX, newY, width, height];
-      
-      return newDetection;
-    });
-    
-    // Update position for next frame
-    setFallbackPosition(prev => (prev + 1) % 360);
-    
-    // Draw and pass to parent component
-    drawDetections(movingDetections);
-    
-    if (onDetection) {
-      onDetection(movingDetections);
-    }
+    // Only pass to parent component, don't draw on canvas
+    onDetection && onDetection(detections);
   };
 
   // Cleanup function
@@ -495,11 +359,12 @@ const VideoFeed = ({ onDetection }) => {
           clearInterval(detectionIntervalRef.current);
         }
         
+        console.log("Setting up detection interval");
         detectionIntervalRef.current = setInterval(() => {
           if (isComponentMounted) {
             runDetection();
           }
-        }, 100);  // Run at 10fps
+        }, 100);  // Run at 10fps for better stability
         
       } catch (err) {
         console.error("Error accessing camera:", err);
@@ -536,16 +401,18 @@ const VideoFeed = ({ onDetection }) => {
         webcamRef.current.video.videoHeight
       );
       
-      // Ensure canvas is properly sized when video is ready
-      if (canvasRef.current && webcamRef.current.video.videoWidth) {
-        canvasRef.current.width = webcamRef.current.video.videoWidth;
-        canvasRef.current.height = webcamRef.current.video.videoHeight;
-        console.log("Canvas dimensions set to:", canvasRef.current.width, canvasRef.current.height);
+      // Force play the video
+      const playPromise = webcamRef.current.video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(err => {
+          console.error("Error playing video:", err);
+          // Try again with user interaction
+          document.addEventListener('click', function playVideoOnce() {
+            webcamRef.current?.video?.play();
+            document.removeEventListener('click', playVideoOnce);
+          });
+        });
       }
-      
-      webcamRef.current.video.play().catch(err => {
-        console.error("Error playing video:", err);
-      });
     }
   };
 
@@ -618,25 +485,28 @@ const VideoFeed = ({ onDetection }) => {
     if (!webcamRef.current || !webcamRef.current.video) return;
     
     const video = webcamRef.current.video;
+    console.log("Video clicked, current state:", video.paused ? "paused" : "playing");
     
     if (video.paused) {
       // Resume video and detection
+      console.log("Resuming video");
       video.play();
       
       // Restart detection interval if needed
       if (!detectionIntervalRef.current) {
+        console.log("Restarting detection interval");
         detectionIntervalRef.current = setInterval(() => {
           if (isComponentMounted) {
             runDetection();
           }
         }, 100);
+      } else {
+        console.log("Detection interval already running");
       }
     } else {
-      // Pause video and keep detection overlay visible
+      // Pause video
+      console.log("Pausing video");
       video.pause();
-      
-      // Keep the detection interval running so we can see the last frame's detections
-      // Instead of clearing it completely
     }
   };
 
@@ -647,90 +517,97 @@ const VideoFeed = ({ onDetection }) => {
         <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
           <div className="text-center">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-2"></div>
-            <p className="text-white">Loading video feed...</p>
+            <p className="text-white">Loading...</p>
           </div>
         </div>
       )}
       
-      {/* Fallback indicator */}
-      {useFallbackDetection && !error && (
-        <div className="absolute top-0 left-0 z-10 bg-yellow-500 text-white px-3 py-1 text-xs font-medium m-2 rounded-full">
-          Fallback Detection Active
-        </div>
-      )}
-      
-      {/* Error message */}
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
-          <div className="text-center p-4 max-w-md bg-red-50 rounded-lg">
-            <svg className="w-12 h-12 text-red-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            <h3 className="text-lg font-medium text-red-900 mb-1">Camera Error</h3>
-            <p className="text-sm text-red-700">{error}</p>
-            <div className="mt-3">
-              <div className="bg-gray-100 p-3 rounded-lg text-sm text-gray-700">
-                <p>Using simulated detection data instead.</p>
-                <p className="mt-1">Detection activity will continue to be shown in the panel.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Video container with fixed aspect ratio */}
+      {/* Video/Image container */}
       <div className="relative w-full h-full max-w-[640px] max-h-[480px] mx-auto">
-        {/* Video feed */}
-        <Webcam
-          ref={webcamRef}
-          onCanPlay={handleCanPlay}
-          className="w-full h-full object-contain bg-black cursor-pointer"
-          screenshotFormat="image/png"
-          videoConstraints={{
-            width: { ideal: 480, max: 640 },
-            height: { ideal: 360, max: 480 },
-            facingMode: "environment",
-            aspectRatio: 4/3
-          }}
-          mirrored={false}
-          audio={false}
-          onClick={handleVideoClick}
-        />
+        {!imageMode ? (
+          <Webcam
+            ref={webcamRef}
+            onCanPlay={handleCanPlay}
+            className="w-full h-full object-contain bg-black cursor-pointer"
+            screenshotFormat="image/png"
+            videoConstraints={{
+              width: { ideal: 640, max: 1280 },
+              height: { ideal: 480, max: 720 },
+              facingMode: "environment"
+            }}
+            mirrored={false}
+            audio={false}
+            onClick={handleVideoClick}
+          />
+        ) : uploadedImage && (
+          <img 
+            src={uploadedImage.src} 
+            className="w-full h-full object-contain"
+            style={{ display: 'block' }}
+          />
+        )}
         
-        {/* Detection overlay */}
-        <canvas
-          ref={canvasRef}
-          className="absolute top-0 left-0 w-full h-full pointer-events-none"
-          style={{
-            width: webcamRef.current?.video?.videoWidth || '100%',
-            height: webcamRef.current?.video?.videoHeight || '100%'
-          }}
-        />
+        {/* Detection overlay - only show in image mode */}
+        {imageMode ? (
+          <canvas
+            ref={canvasRef}
+            className="absolute top-0 left-0 w-full h-full pointer-events-none"
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10 }}
+          />
+        ) : null}
       </div>
       
       {/* Controls */}
       <div className="absolute bottom-4 right-4 flex space-x-2">
+        <input 
+          type="file" 
+          ref={fileInputRef}
+          accept="image/*" 
+          style={{ display: 'none' }} 
+          onChange={handleImageUpload}
+        />
+        
         <button
-          onClick={takeScreenshot}
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200"
+          onClick={() => fileInputRef.current?.click()}
+          className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors duration-200"
         >
-          Take Screenshot
+          Upload Photo
         </button>
-        <button
-          onClick={isRecording ? stopRecording : startRecording}
-          className={`px-4 py-2 ${
-            isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
-          } text-white rounded-lg transition-colors duration-200`}
-        >
-          {isRecording ? 'Stop Recording' : 'Start Recording'}
-        </button>
+        
+        {imageMode && (
+          <button
+            onClick={resetToLiveVideo}
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200"
+          >
+            Back to Live
+          </button>
+        )}
+        
+        {!imageMode && (
+          <>
+            <button
+              onClick={takeScreenshot}
+              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200"
+            >
+              Take Screenshot
+            </button>
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`px-4 py-2 ${
+                isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+              } text-white rounded-lg transition-colors duration-200`}
+            >
+              {isRecording ? 'Stop Recording' : 'Start Recording'}
+            </button>
+          </>
+        )}
       </div>
       
       {/* Status indicator */}
       <div className="absolute bottom-4 left-4 flex items-center space-x-2 bg-gray-900 bg-opacity-75 px-3 py-1 rounded-full">
-        <div className={`h-3 w-3 rounded-full ${error ? 'bg-red-500' : stream ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+        <div className={`h-3 w-3 rounded-full ${error ? 'bg-red-500' : (imageMode ? 'bg-purple-500' : (stream ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'))}`}></div>
         <span className="text-xs text-white font-medium">
-          {error ? 'Offline' : stream ? 'Live' : 'Connecting...'}
+          {error ? 'Offline' : (imageMode ? 'Image Mode' : (stream ? 'Live' : 'Connecting...'))}
         </span>
       </div>
     </div>

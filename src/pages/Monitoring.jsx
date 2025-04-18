@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import VideoFeed from '../components/VideoFeed';
 import BehaviorAnalysis from '../components/BehaviorAnalysis';
 import AlertSystem from '../components/AlertSystem';
@@ -6,7 +7,8 @@ import CheckCircleIcon from "../components/CheckCircleIcon";
 import WarningIcon from "../components/WarningIcon";
 import Header from "../components/Header";
 
-const Monitoring = () => {
+const Monitoring = ({ onAnalysisComplete }) => {
+  const navigate = useNavigate();
   const [detections, setDetections] = useState([]);
   const [currentAlert, setCurrentAlert] = useState(null);
   const [selectedCamera, setSelectedCamera] = useState('main');
@@ -84,10 +86,12 @@ const Monitoring = () => {
       
       // Create analysis results object
       const results = {
-        suspiciousCount: data.suspicious_count || 48, // Use the count from logs if data doesn't have it
+        suspiciousCount: data.suspicious_count || 0,
         detections: data.detections || [],
-        suspicious_activities: data.suspicious_activities || Array(48).fill({ type: 'Suspicious behavior detected' }),
-        timestamp: new Date().toISOString()
+        suspicious_activities: data.suspicious_activities || [],
+        frame_count: data.frame_count,
+        timestamp: new Date().toISOString(),
+        recipient_email: data.recipient_email || "cherupallya@gmail.com"
       };
 
       // Update state with results
@@ -95,8 +99,24 @@ const Monitoring = () => {
       setProcessingComplete(true);
       setIsLoading(false);
       
-      // Navigate to status page with results
-      window.location.href = '/status';
+      // Show appropriate message based on results
+      if (results.suspicious_activities && results.suspicious_activities.length > 0) {
+        setUploadStatus('⚠️ SUSPICIOUS ACTIVITY DETECTED!');
+        handleAlert({
+          type: 'warning',
+          message: 'Suspicious activity detected in uploaded video'
+        });
+      } else {
+        setUploadStatus('✅ Analysis complete - No suspicious activity detected');
+      }
+
+      // Pass results to App component
+      if (onAnalysisComplete) {
+        onAnalysisComplete(results);
+      }
+
+      // Navigate to status page
+      navigate('/status');
       
       // Clear the file input
       event.target.value = '';
