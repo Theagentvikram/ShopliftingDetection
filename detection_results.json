@@ -1,0 +1,30 @@
+{
+  "detections": [
+    {
+      "frame": 10,
+      "tracks": [
+        {
+          "track_id": 1,
+          "bbox": [
+            100,
+            100,
+            200,
+            300
+          ],
+          "class": 0
+        }
+      ]
+    }
+  ],
+  "suspicious_activities": [
+    {
+      "frame": 10,
+      "timestamp": 0.5,
+      "type": "suspicious_behavior",
+      "details": "Fallback detection - error processing video"
+    }
+  ],
+  "frame_count": 100,
+  "fps": 20,
+  "recipient_email": "example@example.com"
+}

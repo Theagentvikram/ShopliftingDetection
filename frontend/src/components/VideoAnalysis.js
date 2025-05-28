@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Box, Button, CircularProgress, Typography, Alert, LinearProgress } from '@mui/material';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = 'http://localhost:8111';
 
 const VideoAnalysis = () => {
     const [selectedFile, setSelectedFile] = useState(null);
@@ -39,7 +39,7 @@ const VideoAnalysis = () => {
         formData.append('file', selectedFile);
 
         try {
-            const response = await axios.post(`${BACKEND_URL}/process-video`, formData, {
+            const response = await axios.post(`${BACKEND_URL}/analyze-video`, formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
                 },
@@ -63,8 +63,17 @@ const VideoAnalysis = () => {
     };
 
     const visualizeResults = (results) => {
-        if (!videoRef.current || !canvasRef.current || !results) return;
+        if (!videoRef.current || !canvasRef.current || !results) {
+            console.error('Missing required elements for visualization:', {
+                videoRef: !!videoRef.current,
+                canvasRef: !!canvasRef.current,
+                results: !!results
+            });
+            return;
+        }
 
+        console.log('Visualizing results:', results);
+        
         const video = videoRef.current;
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
@@ -72,12 +81,12 @@ const VideoAnalysis = () => {
         const updateCanvasSize = () => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
+            console.log(`Canvas resized to ${canvas.width}x${canvas.height}`);
         };
 
         // Update canvas size when video metadata is loaded
         video.addEventListener('loadedmetadata', updateCanvasSize);
         
-        let currentFrame = 0;
         let animationFrameId;
 
         const drawFrame = () => {
@@ -86,31 +95,87 @@ const VideoAnalysis = () => {
                 return;
             }
 
+            // Calculate current frame number based on video time and fps
+            const currentFrameNumber = Math.floor(video.currentTime * results.fps);
+            
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
             // Find detections for current frame
-            const frameData = results.detections.find(d => d.frame === Math.floor(video.currentTime * results.fps));
-            if (frameData) {
+            const frameData = results.detections.find(d => d.frame === currentFrameNumber);
+            
+            // Check if we have any suspicious activities at this frame
+            const activities = results.suspicious_activities && results.suspicious_activities.length > 0 ? 
+                results.suspicious_activities.filter(a => a.frame === currentFrameNumber) : [];
+            
+            // Draw suspicious activity indicator if any exist at this frame
+            if (activities && activities.length > 0) {
+                // Draw a red border around the frame to indicate suspicious activity
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 10;
+                ctx.strokeRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw text for each activity
+                ctx.fillStyle = '#ff0000';
+                ctx.font = 'bold 20px Arial';
+                activities.forEach((activity, index) => {
+                    ctx.fillText(
+                        `ALERT: ${activity.type}`, 
+                        20, 
+                        30 + (index * 30)
+                    );
+                });
+            }
+            
+            // Draw bounding boxes for detections
+            if (frameData && frameData.tracks && frameData.tracks.length > 0) {
+                console.log(`Drawing ${frameData.tracks.length} tracks for frame ${currentFrameNumber}`);
+                
                 frameData.tracks.forEach(track => {
-                    const [x1, y1, x2, y2] = track.bbox;
-                    
-                    // Draw bounding box
-                    ctx.strokeStyle = track.class === 0 ? '#00ff00' : '#ff0000';
-                    ctx.lineWidth = 2;
-                    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                    try {
+                        // Ensure bbox is valid
+                        if (!track.bbox || track.bbox.length !== 4) {
+                            console.warn('Invalid bbox format:', track.bbox);
+                            return;
+                        }
+                        
+                        const [x1, y1, x2, y2] = track.bbox;
+                        
+                        // Calculate width and height
+                        const width = x2 - x1;
+                        const height = y2 - y1;
+                        
+                        if (isNaN(width) || isNaN(height) || width <= 0 || height <= 0) {
+                            console.warn('Invalid bbox dimensions:', track.bbox);
+                            return;
+                        }
+                        
+                        // Draw bounding box
+                        ctx.strokeStyle = track.class === 0 ? '#00ff00' : '#ff0000';
+                        ctx.lineWidth = 3;
+                        ctx.strokeRect(x1, y1, width, height);
 
-                    // Draw track ID
-                    ctx.fillStyle = track.class === 0 ? '#00ff00' : '#ff0000';
-                    ctx.font = '16px Arial';
-                    ctx.fillText(`ID: ${track.track_id}`, x1, y1 - 5);
+                        // Draw track ID with background
+                        const label = `ID: ${track.track_id}`;
+                        ctx.fillStyle = track.class === 0 ? 'rgba(0, 255, 0, 0.7)' : 'rgba(255, 0, 0, 0.7)';
+                        const textWidth = ctx.measureText(label).width;
+                        ctx.fillRect(x1, y1 - 25, textWidth + 10, 25);
+                        
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.font = 'bold 16px Arial';
+                        ctx.fillText(label, x1 + 5, y1 - 7);
+                    } catch (err) {
+                        console.error('Error drawing track:', err, track);
+                    }
                 });
             }
 
             animationFrameId = requestAnimationFrame(drawFrame);
         };
 
+        // Start drawing when video plays
         video.addEventListener('play', () => {
+            console.log('Video started playing, beginning visualization');
             drawFrame();
         });
 
@@ -211,8 +276,8 @@ const VideoAnalysis = () => {
                                 Suspicious Activities Detected
                             </Typography>
                             {results.suspicious_activities.map((activity, index) => (
-                                <Typography key={index} variant="body1">
-                                    {`Detected at ${activity.timestamp.toFixed(2)}s (frame ${activity.frame})`}
+                                <Typography key={index} variant="body1" sx={{ mb: 1 }}>
+                                    {`${index + 1}. ${activity.type} at ${parseFloat(activity.timestamp).toFixed(2)}s (frame ${activity.frame}): ${activity.details}`}
                                 </Typography>
                             ))}
                         </Box>
@@ -223,4 +288,4 @@ const VideoAnalysis = () => {
     );
 };
 
-export default VideoAnalysis; 
+export default VideoAnalysis;

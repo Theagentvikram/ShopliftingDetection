@@ -84,6 +84,15 @@ const Monitoring = ({ onAnalysisComplete }) => {
       const data = await response.json();
       console.log("Backend response:", data);
       
+      // Extract a frame image if available (from the first detection with a thumbnail, if any)
+      let frameImage = null;
+      if (data.thumbnail_base64) {
+        frameImage = `data:image/jpeg;base64,${data.thumbnail_base64}`;
+      } else {
+        // If backend doesn't provide a thumbnail, create a placeholder image
+        frameImage = createPlaceholderImage(640, 480);
+      }
+      
       // Create analysis results object
       const results = {
         suspiciousCount: data.suspicious_count || 0,
@@ -91,7 +100,8 @@ const Monitoring = ({ onAnalysisComplete }) => {
         suspicious_activities: data.suspicious_activities || [],
         frame_count: data.frame_count,
         timestamp: new Date().toISOString(),
-        recipient_email: data.recipient_email || "cherupallya@gmail.com"
+        recipient_email: data.recipient_email || "cherupallya@gmail.com",
+        frameImage: frameImage
       };
 
       // Update state with results
@@ -130,6 +140,26 @@ const Monitoring = ({ onAnalysisComplete }) => {
       // Clear the file input on error
       event.target.value = '';
     }
+  };
+
+  // Helper function to create a placeholder image if we don't get a thumbnail from backend
+  const createPlaceholderImage = (width, height) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    
+    // Fill with light gray
+    ctx.fillStyle = '#f0f0f0';
+    ctx.fillRect(0, 0, width, height);
+    
+    // Add text
+    ctx.fillStyle = '#555555';
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('No preview available', width/2, height/2);
+    
+    return canvas.toDataURL('image/jpeg');
   };
 
   return (

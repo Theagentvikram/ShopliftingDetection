@@ -7,6 +7,7 @@ import Alerts from './pages/Alerts';
 import Settings from './pages/Settings';
 import Monitoring from './pages/Monitoring';
 import StatusPage from './pages/RecoveryPage';
+import ImagesGallery from './pages/ImagesGallery';
 
 // Error boundary component
 class ErrorBoundary extends React.Component {
@@ -67,6 +68,14 @@ function App() {
                 path="/status" 
                 element={
                   <StatusPage 
+                    analysisResults={analysisResults}
+                  />
+                } 
+              />
+              <Route 
+                path="/images-gallery" 
+                element={
+                  <ImagesGallery 
                     analysisResults={analysisResults}
                   />
                 } 

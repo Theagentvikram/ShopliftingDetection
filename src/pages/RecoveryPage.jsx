@@ -1,28 +1,203 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 const StatusPage = ({ analysisResults }) => {
   const navigate = useNavigate();
-  const [detectionCount, setDetectionCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const canvasRef = useRef(null);
+  const [showDetections, setShowDetections] = useState(false);
+  const [thumbnailImage, setThumbnailImage] = useState(null);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imgError, setImgError] = useState(null);
   
-  // Process results when they arrive
   useEffect(() => {
-    if (analysisResults) {
-      setLoading(false);
+    // If we have results with detections, create a thumbnail image
+    if (analysisResults?.frameImage) {
+      console.log("Setting thumbnail image from frameImage:", analysisResults.frameImage.substring(0, 50) + "...");
+      setThumbnailImage(analysisResults.frameImage);
+    } else {
+      console.log("No frameImage found in analysisResults:", analysisResults);
       
-      // Get detection count from results
-      const suspiciousCount = analysisResults.suspiciousCount || 
-                             (analysisResults.suspicious_activities ? 
-                              analysisResults.suspicious_activities.length : 0);
-                              
-      setDetectionCount(suspiciousCount);
+      // Create a fallback image if one doesn't exist
+      if (analysisResults && !analysisResults.frameImage) {
+        const placeholderImage = createPlaceholderImage(640, 480);
+        console.log("Created placeholder image");
+        setThumbnailImage(placeholderImage);
+      }
     }
   }, [analysisResults]);
 
+  // Create a placeholder image with detection info
+  const createPlaceholderImage = (width, height) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    
+    // Fill with light gray background
+    ctx.fillStyle = '#f0f0f0';
+    ctx.fillRect(0, 0, width, height);
+    
+    // Add grid pattern
+    ctx.strokeStyle = '#e0e0e0';
+    ctx.lineWidth = 1;
+    
+    // Draw grid lines
+    for (let x = 0; x < width; x += 40) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+    
+    for (let y = 0; y < height; y += 40) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+    
+    // Add text
+    ctx.fillStyle = '#555555';
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Detection preview not available', width/2, height/2 - 15);
+    ctx.font = '16px Arial';
+    ctx.fillText('System will display bounding boxes on generated image', width/2, height/2 + 20);
+    
+    return canvas.toDataURL('image/jpeg');
+  };
+
+  // Draw bounding boxes on the canvas
+  const drawDetectionsOnCanvas = () => {
+    if (!canvasRef.current) {
+      console.error("Canvas ref is null");
+      return;
+    }
+    
+    if (!thumbnailImage) {
+      console.error("No thumbnail image available");
+      return;
+    }
+    
+    setImageLoaded(false);
+    setImgError(null);
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    console.log("Starting to draw detections on canvas");
+    
+    // Clear canvas first
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    const img = new Image();
+    
+    img.onload = () => {
+      console.log("Image loaded successfully:", img.width, "x", img.height);
+      
+      // Set canvas dimensions to match the image
+      canvas.width = img.width;
+      canvas.height = img.height;
+      
+      // Draw the image
+      ctx.drawImage(img, 0, 0, img.width, img.height);
+      console.log("Image drawn to canvas");
+      
+      // Verify the image was drawn
+      try {
+        const pixelData = ctx.getImageData(0, 0, 1, 1).data;
+        console.log("Canvas pixel data check:", pixelData);
+      } catch (e) {
+        console.error("Error checking pixel data:", e);
+      }
+      
+      // Draw bounding boxes if we have detections
+      if (analysisResults?.detections && analysisResults.detections.length > 0) {
+        console.log("Drawing detections:", analysisResults.detections);
+        
+        analysisResults.detections.forEach(detection => {
+          if (detection.tracks && detection.tracks.length > 0) {
+            // Handle tracks object from backend
+            detection.tracks.forEach(track => {
+              const [x1, y1, x2, y2] = track.bbox;
+              const width = x2 - x1;
+              const height = y2 - y1;
+              
+              // Draw rectangle
+              ctx.strokeStyle = '#FF0000'; // Red
+              ctx.lineWidth = 3;
+              ctx.strokeRect(x1, y1, width, height);
+              
+              // Draw label
+              ctx.fillStyle = '#FF0000';
+              ctx.font = '16px Arial';
+              ctx.fillText(`Person ID:${track.track_id}`, x1, y1 - 5);
+            });
+          } else if (detection.bbox) {
+            // Handle direct detection object format
+            const [x, y, width, height] = detection.bbox;
+            const label = detection.class || 'object';
+            const score = Math.round((detection.score || 0) * 100);
+            
+            // Draw rectangle
+            ctx.strokeStyle = '#00FF00'; // Bright green
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Draw label
+            ctx.fillStyle = '#00FF00';
+            ctx.font = '16px Arial';
+            ctx.fillText(`${label} ${score}%`, x, y - 5);
+          }
+        });
+      } else {
+        console.log("No detections found in analysisResults:", analysisResults);
+      }
+      
+      setImageLoaded(true);
+    };
+    
+    img.onerror = (e) => {
+      console.error("Error loading image:", e);
+      setImgError("Failed to load image. The image data may be corrupted or in an invalid format.");
+      setImageLoaded(false);
+      
+      // Draw error message on canvas
+      canvas.width = 400;
+      canvas.height = 300;
+      ctx.fillStyle = '#f8d7da';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#721c24';
+      ctx.font = '16px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText("Error loading image", canvas.width/2, canvas.height/2 - 10);
+      ctx.font = '14px Arial';
+      ctx.fillText("Check browser console for details", canvas.width/2, canvas.height/2 + 20);
+    };
+    
+    // Force browser to wait for onload by setting src at the end
+    console.log("Setting image source to thumbnail");
+    img.src = thumbnailImage;
+  };
+
+  const handleToggleDetections = () => {
+    setShowDetections(!showDetections);
+    if (!showDetections) {
+      // Draw detections when toggling on
+      console.log("Toggling detections on, will draw on canvas");
+      setTimeout(() => {
+        drawDetectionsOnCanvas();
+      }, 0);
+    }
+  };
+
   const handleReturnToMonitoring = () => {
     navigate('/monitoring');
+  };
+
+  const handleViewImagesGallery = () => {
+    navigate('/images-gallery');
   };
 
   // If no results provided, show loading state
@@ -37,8 +212,10 @@ const StatusPage = ({ analysisResults }) => {
     );
   }
   
-  // Determine if suspicious activities were found
-  const isSuspicious = detectionCount > 0;
+  // Use the actual count or default to 48 from logs
+  const suspiciousCount = analysisResults.suspiciousCount || 
+                         (analysisResults.suspicious_activities ? analysisResults.suspicious_activities.length : 0);
+  const isSuspicious = suspiciousCount > 0;
   const recipientEmail = analysisResults.recipient_email || "cherupallya@gmail.com";
   const frameCount = analysisResults.frame_count || 960;
 
@@ -46,12 +223,7 @@ const StatusPage = ({ analysisResults }) => {
     <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
       <div className="max-w-lg w-full bg-white rounded-lg shadow-xl p-8">
         <div className="text-center">
-          {loading ? (
-            <div className="mb-6">
-              <LoadingSpinner size="md" color="blue" />
-              <p className="mt-4 text-gray-600">Processing analysis results...</p>
-            </div>
-          ) : isSuspicious ? (
+          {isSuspicious ? (
             <>
               <div className="mb-6">
                 <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
@@ -74,7 +246,7 @@ const StatusPage = ({ analysisResults }) => {
                 </h2>
                 <div className="mt-4 bg-red-50 p-4 rounded-md">
                   <p className="text-red-700 font-medium">
-                    {detectionCount} suspicious activities detected
+                    {suspiciousCount} suspicious activities detected
                   </p>
                   <p className="mt-2 text-red-600 text-sm">
                     An email alert has been sent to {recipientEmail}
@@ -128,6 +300,60 @@ const StatusPage = ({ analysisResults }) => {
               </div>
             </>
           )}
+
+          {/* Detection results section */}
+          <div className="mt-6 border-t pt-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-semibold text-lg text-gray-800">Detection Results</h3>
+              <div className="flex space-x-2">
+                <button
+                  onClick={handleViewImagesGallery}
+                  className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors duration-200 text-sm"
+                >
+                  View Raw Images
+                </button>
+                <button
+                  onClick={handleToggleDetections}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200 text-sm"
+                >
+                  {showDetections ? 'Hide Detections' : 'Show Detections'}
+                </button>
+              </div>
+            </div>
+            
+            {showDetections && (
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="relative w-full">
+                  <canvas
+                    ref={canvasRef}
+                    className="mx-auto border border-gray-300 rounded-lg shadow-sm max-w-full"
+                    style={{ minHeight: "240px" }}
+                  />
+                  {!imageLoaded && !imgError && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <LoadingSpinner size="md" color="blue" />
+                    </div>
+                  )}
+                  {imgError && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-red-100 bg-opacity-50">
+                      <div className="text-center p-4">
+                        <p className="text-red-600 font-medium">{imgError}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {analysisResults?.detections?.length > 0 && (
+                  <div className="mt-3 bg-blue-50 p-3 rounded-md text-blue-700 text-sm">
+                    <p>{analysisResults.detections.length} objects detected in video</p>
+                    <p className="mt-1 text-xs text-blue-600">
+                      Having trouble seeing the image? Try <button onClick={handleViewImagesGallery} className="underline font-medium">viewing the raw images</button> instead.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="mt-8">
             <button
